@@ -37,20 +37,6 @@ enum {
   RB_USED_IN_READ = 2, // used in read
 };
 
-struct perf_reader {
-  perf_reader_raw_cb raw_cb;
-  perf_reader_lost_cb lost_cb;
-  void *cb_cookie; // to be returned in the cb
-  void *buf; // for keeping segmented data
-  size_t buf_size;
-  void *base;
-  int rb_use_state;
-  pid_t rb_read_tid;
-  int page_size;
-  int page_cnt;
-  int fd;
-};
-
 struct perf_reader * perf_reader_new(perf_reader_raw_cb raw_cb,
                                      perf_reader_lost_cb lost_cb,
                                      void *cb_cookie, int page_cnt) {
@@ -63,6 +49,7 @@ struct perf_reader * perf_reader_new(perf_reader_raw_cb raw_cb,
   reader->fd = -1;
   reader->page_size = getpagesize();
   reader->page_cnt = page_cnt;
+  reader->is_unwind_call_stack = false;
   return reader;
 }
 
@@ -115,6 +102,19 @@ struct perf_sample_trace_kprobe {
 };
 
 static void parse_sw(struct perf_reader *reader, void *data, int size) {
+  //tiny: ++++++++++++++
+  // struct {
+  //     struct perf_event_header header;
+  //     u32    size;               /* if PERF_SAMPLE_RAW */
+  //     char   data[size];         /* if PERF_SAMPLE_RAW */
+  //     u64    abi;                /* if PERF_SAMPLE_REGS_USER */
+  //     u64    regs[weight(mask)]; /* if PERF_SAMPLE_REGS_USER */
+  //     u64    size;               /* if PERF_SAMPLE_STACK_USER */
+  //     char   data[size];         /* if PERF_SAMPLE_STACK_USER */
+  //     u64    dyn_size;           /* if PERF_SAMPLE_STACK_USER && size != 0 */
+  // };
+  //tiny:---------------
+
   uint8_t *ptr = data;
   struct perf_event_header *header = (void *)data;
 
@@ -136,14 +136,51 @@ static void parse_sw(struct perf_reader *reader, void *data, int size) {
     return;
   }
 
-  // sanity check
-  if (ptr != (uint8_t *)data + size) {
-    fprintf(stderr, "%s: extra data at end of sample\n", __FUNCTION__);
-    return;
-  }
+  //tiny: ++++++++++
+  // if (reader->is_unwind_call_stack) {
+    // 这里要和bpf代码里面传递的数据结构一致
+    // int pid = *(int *)raw->data;
+    // 这里的 size 是 perf_submit 传递的那个大小
+    // 这里的 data 是整个传递的数据 也就是 PERF_SAMPLE_RAW 部分
+    // 到此处 ptr 也就是 PERF_SAMPLE_RAW 结尾
+    // 也就是说 write_size 是 PERF_SAMPLE_REGS_USER 和 PERF_SAMPLE_STACK_USER 的整个大小
+    // int write_size = ((uint8_t *)data + size) - ptr;
+    // print_frame_info(pid, ptr, write_size);
+    // ptr += write_size;//16672;
+    // fprintf(stderr, "[%s] pid=%d write_size:%d\n", __FUNCTION__, *(int *)raw->data, write_size);
+  // }
+  // enum perf_sample_regs_abi {
+  //   PERF_SAMPLE_REGS_ABI_NONE = 0,
+  //   PERF_SAMPLE_REGS_ABI_32 = 1,
+  //   PERF_SAMPLE_REGS_ABI_64 = 2,
+  // };
+  // struct {
+  //     uint64_t abi;
+  //     uint64_t regs[33];
+  // } *user_regs = NULL;
+  // user_regs = (void *)ptr;
+  // ptr += 8 + 8 * 33;
+  // fprintf(stderr, "[%s] pid=%d abi=%lu\n", __FUNCTION__, *(int *)raw->data, user_regs->abi);
+  // struct {
+  //     uint64_t size;
+  //     // 这个是 bcc 里面预设的固定值 sample_stack_user
+  //     char data[16384];
+  //     uint64_t dyn_size;
+  // } *user_stack = NULL;
+  // user_stack = (void *)ptr;
+  // ptr += 8 + user_stack->size + 8;
+  // fprintf(stderr, "[%s] size=%lu dyn_size=%lu\n", __FUNCTION__, user_stack->size, user_stack->dyn_size);
+
+  // // sanity check
+  // if (ptr != (uint8_t *)data + size) {
+  //   fprintf(stderr, "%s: extra data at end of sample\n", __FUNCTION__);
+  //   return;
+  // }
+  
 
   if (reader->raw_cb)
-    reader->raw_cb(reader->cb_cookie, raw->data, raw->size);
+    reader->raw_cb(reader->cb_cookie, raw->data, raw->size + (reader->is_unwind_call_stack? UNWIND_EVENT_SIZE : 0));
+  //tiny:-----------
 }
 
 static uint64_t read_data_head(volatile struct perf_event_mmap_page *perf_header) {

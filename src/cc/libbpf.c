@@ -1615,6 +1615,21 @@ void * bpf_open_perf_buffer_opts(perf_reader_raw_cb raw_cb,
   attr.sample_type = PERF_SAMPLE_RAW;
   attr.sample_period = 1;
   attr.wakeup_events = opts->wakeup_events;
+
+  //tiny: +++++++++++++++++++++++
+  if (opts->unwind_call_stack == 1) {
+    // sample_type 用于指示需要哪些类型的数据
+    // sample_regs_user 用于指示需要多少个寄存器的数据，注意是二进制为1的数量
+    // sample_stack_user 用于指示需要从栈上获取的数据最大大小
+
+    attr.sample_type |= PERF_SAMPLE_STACK_USER | PERF_SAMPLE_REGS_USER;
+    attr.sample_stack_user = UNWIND_SAMPLE_STACK_USER;
+    attr.sample_regs_user = ((1ULL << UNWIND_RGS_CNT) - 1);
+    attr.size = sizeof(attr);
+    reader->is_unwind_call_stack = true;
+  }
+  //tiny: -----------------------
+
   pfd = syscall(__NR_perf_event_open, &attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
   if (pfd < 0) {
     fprintf(stderr, "perf_event_open: %s\n", strerror(errno));

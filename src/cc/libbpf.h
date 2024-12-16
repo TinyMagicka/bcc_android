@@ -27,6 +27,24 @@
 extern "C" {
 #endif
 
+//tiny: ++++++++++++++++++++++++++
+#define UNWIND_SAMPLE_STACK_USER 0x4000  // MAX=65528   
+#define UNWIND_RGS_CNT	33  			 // arm64通用寄存器 + sp + pc
+
+struct unwind_reg_info{
+	__u64 abi;
+	__u64 regs[UNWIND_RGS_CNT];
+};
+
+struct unwind_stack_info{
+	__u64 size;
+	char data[UNWIND_SAMPLE_STACK_USER];
+	__u64 dyn_size;
+};
+
+#define UNWIND_EVENT_SIZE    (sizeof(struct unwind_reg_info) + sizeof(struct unwind_stack_info)) //16672 在 parse_sw 函数中可计算出来 
+//tiny: --------------------------
+
 struct bcc_create_map_attr {
 	const char *name;
 	enum bpf_map_type map_type;
@@ -56,6 +74,9 @@ struct bcc_perf_buffer_opts {
   int pid;
   int cpu;
   int wakeup_events;
+  //tiny: ++++++++++
+  int unwind_call_stack;
+  //tiny:-----------
 };
 
 int bcc_create_map(enum bpf_map_type map_type, const char *name,
